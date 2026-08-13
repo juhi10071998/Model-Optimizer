@@ -266,6 +266,12 @@ def _export_transformers_checkpoint_streaming(
     # Only apply when tie_word_embeddings=True: _tied_weights_keys can list keys whose
     # weights are not actually shared (e.g. if the model was saved with tie_word_embeddings=False
     # but the attribute was never cleared), which would incorrectly drop lm_head.weight.
+    #
+    # TODO(tied-map): the resident path now sources ties from HF's ``model.all_tied_weights_keys``
+    # (name-based, config-gated, covers dict-style / MoE ties). This streaming path could read the
+    # same map to also dedup dict-style/MoE ties for offloaded 5.x models (e.g. offloaded DiffGemma),
+    # closing the streaming gap. NOT applied here yet: the offload path needs its own validation
+    # (per-tensor materialization order, meta tensors, disk round-trip) before we trust the swap.
     raw_tied_keys: set[str] = (
         set(getattr(model, "_tied_weights_keys", None) or [])
         if getattr(model.config, "tie_word_embeddings", False)
