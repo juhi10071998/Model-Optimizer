@@ -77,7 +77,6 @@ __doc__ = f"""Utility functions for model type detection and classification.
 
 __all__ = [
     "TiedWeightMap",
-    "build_tied_weight_map",
     "get_language_model_from_vl",
     "get_model_type",
     "is_multimodal_model",
@@ -283,12 +282,3 @@ class TiedWeightMap:
         if gk is None:
             return None
         return gk.removesuffix(f".{first_proj_attr}")
-
-
-def build_tied_weight_map(model: nn.Module) -> TiedWeightMap:
-    """Capture the tied-weight map while resident, to pass to ``export_hf_checkpoint(tied_map=...)``.
-
-    Call right after load, before FSDP2 shard / offload split the shared tied param's
-    id-group; the returned map keys ties by name, which survive sharding/offload/packing.
-    """
-    return TiedWeightMap(model)
