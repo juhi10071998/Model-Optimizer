@@ -240,7 +240,7 @@ def _build_tied_alias_map(model: nn.Module) -> dict[str, str]:
 
 
 class TiedWeightMap:
-    """Name-based lookups over the ``{alias: canonical}`` map from :func:`_build_tied_alias_map`.
+    """Name-based lookups over HF's ``{alias: canonical}`` tie map (``model.all_tied_weights_keys``).
 
     Export sites ask for a *group key*: both sides of a tie share one key, an untied parameter
     returns ``None``. The key is a name, so it survives packing / FSDP / offload, where a
@@ -248,8 +248,17 @@ class TiedWeightMap:
     """
 
     def __init__(self, model: nn.Module) -> None:
-        """Build the name-based ``{alias: canonical}`` map from ``model``'s declared ties."""
-        self.alias_to_canonical: dict[str, str] = _build_tied_alias_map(model)
+        """Source the ``{alias: canonical}`` tie map from HF's ``all_tied_weights_keys``.
+
+        transformers >=5.0 resolves the tie map at load -- ``{target(alias): source(canonical)}``,
+        already config-gated and ``torch.equal``-pruned, and keyed by *name* so it survives FSDP
+        shard / offload. The direction maps 1:1 onto our alias->canonical (target=alias/drop,
+        source=canonical/keep). When the attribute is absent (transformers <5.0) the map is empty
+        and the ``data_ptr`` backstop in :func:`postprocess_state_dict` remains the net.
+        """
+        self.alias_to_canonical: dict[str, str] = dict(
+            getattr(model, "all_tied_weights_keys", None) or {}
+        )
         self.canonical_names: set[str] = set(self.alias_to_canonical.values())
 
     def group_key(self, param_full_name: str) -> str | None:

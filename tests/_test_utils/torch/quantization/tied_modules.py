@@ -109,8 +109,12 @@ def wrap_in_parent_with_tied_keys(
         parent._tied_weights_keys = {
             rf"^encoder\.{re.escape(weight_attr)}$": f"decoder.{weight_attr}",
         }
+        # transformers >=5.0 resolves the declaration into concrete {alias: canonical} names on
+        # the model (``all_tied_weights_keys``); TiedWeightMap reads that attribute.
+        parent.all_tied_weights_keys = {f"encoder.{weight_attr}": f"decoder.{weight_attr}"}
     else:
-        # Legacy list-style: just a list of tied paths, no canonical info.
+        # Legacy list-style: just a list of tied paths, no canonical info -> empty resolved map.
         parent._tied_weights_keys = [f"encoder.{weight_attr}"]
+        parent.all_tied_weights_keys = {}
 
     return parent
