@@ -247,13 +247,11 @@ class TiedWeightMap:
     """
 
     def __init__(self, model: nn.Module) -> None:
-        """Source the ``{alias: canonical}`` tie map from HF's ``all_tied_weights_keys``.
+        """Source the tie map from HF's ``all_tied_weights_keys`` (transformers >=5.0).
 
-        transformers >=5.0 resolves the tie map at load -- ``{target(alias): source(canonical)}``,
-        already config-gated and ``torch.equal``-pruned, and keyed by *name* so it survives FSDP
-        shard / offload. The direction maps 1:1 onto our alias->canonical (target=alias/drop,
-        source=canonical/keep). When the attribute is absent (transformers <5.0) the map is empty
-        and the ``data_ptr`` backstop in :func:`postprocess_state_dict` remains the net.
+        HF's ``{target: source}`` == our ``{alias: canonical}``, resolved at load, config-gated,
+        ``torch.equal``-pruned, and name-based so it survives FSDP shard / offload. Absent on
+        transformers <5.0 -> empty map (the ``data_ptr`` backstop in postprocess is the net).
         """
         self.alias_to_canonical: dict[str, str] = dict(
             getattr(model, "all_tied_weights_keys", None) or {}
