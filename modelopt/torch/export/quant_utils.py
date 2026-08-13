@@ -1207,6 +1207,25 @@ def postprocess_state_dict(
                     f"quantization state); keeping both sides to avoid orphaned tensors."
                 )
                 continue
+            # Safety: a declared tie must export identical bytes on both sides. If the two sides
+            # quantized to different values (e.g. asymmetric quant config), dropping the alias would
+            # silently corrupt it -- the HF loader re-ties the canonical over the dropped name. Fail
+            # loudly rather than export wrong weights. (Mirrors HF's own torch.equal decline-to-tie.)
+            for ak, ck in members:
+                av, cv = post_state_dict[ak], post_state_dict[ck]
+                if (
+                    isinstance(av, torch.Tensor)
+                    and isinstance(cv, torch.Tensor)
+                    and not av.is_meta
+                    and not cv.is_meta
+                    and not torch.equal(av, cv)
+                ):
+                    raise RuntimeError(
+                        f"Tied-weight export mismatch: '{ak}' differs from its canonical '{ck}'. "
+                        f"The tie is declared but the two sides quantized to different values, so "
+                        f"deduplicating would corrupt '{ak}'. Ensure both tied modules use the same "
+                        f"quantization format/config."
+                    )
             for ak, _ in members:
                 keys_to_delete.append(ak)
             if gk in dense_prefixes:

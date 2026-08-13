@@ -15,6 +15,7 @@
 
 """Tests for tied-weight helpers in unified_export_hf."""
 
+import pytest
 import torch
 from _test_utils.torch.quantization.tied_modules import (
     make_tied_linear_pair,
@@ -235,8 +236,10 @@ def test_postprocess_name_based_drops_alias_across_distinct_addresses():
     parent = wrap_in_parent_with_tied_keys(enc, dec, decoder_canonical=True)
     tied_map = TiedWeightMap(parent)
 
-    # Distinct storages (different data_ptr): the address pass could never collapse these.
-    sd = {"encoder.weight": torch.randn(4, 4), "decoder.weight": torch.randn(4, 4)}
+    # Distinct storages (different data_ptr) but identical bytes (genuinely tied): the address
+    # pass could never collapse these, but the name pass does.
+    shared = torch.randn(4, 4)
+    sd = {"encoder.weight": shared.clone(), "decoder.weight": shared.clone()}
     assert sd["encoder.weight"].data_ptr() != sd["decoder.weight"].data_ptr()
 
     out = postprocess_state_dict(sd, maxbound=448, quantization=None, tied_map=tied_map)
@@ -422,17 +425,30 @@ def test_postprocess_dense_tie_drops_pre_quant_scale_companion():
     enc, dec = make_tied_linear_pair()
     parent = wrap_in_parent_with_tied_keys(enc, dec, decoder_canonical=True)
     tied_map = TiedWeightMap(parent)
+    w, pqs = torch.randn(4, 4), torch.randn(4)  # tied sides export identical bytes
     sd = {
-        "encoder.weight": torch.randn(4, 4),
-        "encoder.pre_quant_scale": torch.randn(4),
-        "decoder.weight": torch.randn(4, 4),
-        "decoder.pre_quant_scale": torch.randn(4),
+        "encoder.weight": w.clone(),
+        "encoder.pre_quant_scale": pqs.clone(),
+        "decoder.weight": w.clone(),
+        "decoder.pre_quant_scale": pqs.clone(),
     }
 
     out = postprocess_state_dict(sd, maxbound=448, quantization=None, tied_map=tied_map)
 
     assert "encoder.weight" not in out and "encoder.pre_quant_scale" not in out  # both dropped
     assert "decoder.weight" in out and "decoder.pre_quant_scale" in out  # canonical kept
+
+
+def test_postprocess_raises_when_tied_sides_export_different_values():
+    """A declared tie whose two sides export different bytes must raise, not silently corrupt."""
+
+    class _TwoLinear(torch.nn.Module):
+        all_tied_weights_keys = {"A.weight": "B.weight"}
+
+    tied_map = TiedWeightMap(_TwoLinear())
+    sd = {"A.weight": torch.zeros(4, 4), "B.weight": torch.ones(4, 4)}  # declared tie, but differ
+    with pytest.raises(RuntimeError, match="differs from its canonical"):
+        postprocess_state_dict(sd, maxbound=448, quantization=None, tied_map=tied_map)
 
 
 def test_postprocess_state_dict_preserves_zero_pointer_tensors():
