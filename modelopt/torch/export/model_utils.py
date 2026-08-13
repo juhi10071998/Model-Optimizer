@@ -14,14 +14,7 @@
 # limitations under the License.
 """Utility functions for model type detection and classification."""
 
-import re
-import warnings
-from collections import defaultdict
-
 import torch.nn as nn
-
-from modelopt.torch.quantization.utils.core_utils import has_accelerate_offload
-from modelopt.torch.utils.distributed import is_fsdp2_model
 
 MODEL_NAME_TO_TYPE = {
     "GPT2": "gpt",
@@ -157,85 +150,6 @@ def get_language_model_from_vl(model) -> list[nn.Module] | None:
 
     # Pattern 4: No language_model found
     return None
-
-
-def _build_tied_alias_map(model: nn.Module) -> dict[str, str]:
-    r"""Map each tied *alias* parameter name to its *canonical* (kept) name.
-
-    Ties are found by object identity while the model is resident and recorded by name, so the
-    map survives later packing / FSDP gather / offload. Declarations pick the canonical name:
-    dict-style ``_tied_weights_keys`` drops the alias side, ``tie_word_embeddings`` keeps the
-    input embedding. Undeclared shares are left to the address backstop in
-    :func:`postprocess_state_dict`.
-    """
-    # remove_duplicate=False so a shared Parameter shows up under every one of its names.
-    groups: dict[int, list[str]] = defaultdict(list)
-    param_names: list[str] = []
-    for name, parameter in model.named_parameters(remove_duplicate=False):
-        groups[id(parameter)].append(name)
-        param_names.append(name)
-
-    # Collect the declared alias names (the drop side); we match only the alias pattern.
-    declared_aliases: set[str] = set()
-    for mod_name, submodule in model.named_modules():
-        tied = getattr(submodule, "_tied_weights_keys", None)
-        if not isinstance(tied, dict) or not tied:
-            continue
-        prefix = f"{mod_name}." if mod_name else ""
-        plen = len(prefix)
-        for alias_pat in tied:
-            try:
-                alias_re = re.compile(alias_pat)
-            except re.error:
-                continue
-            for full_name in param_names:
-                if prefix and not full_name.startswith(prefix):
-                    continue
-                if alias_re.search(full_name[plen:]):
-                    declared_aliases.add(full_name)
-
-    # tie_word_embeddings: the input-embedding name is canonical for the shared weight.
-    embedding_canonical: dict[int, str] = {}
-    if getattr(getattr(model, "config", None), "tie_word_embeddings", False):
-        try:
-            in_emb = model.get_input_embeddings()
-            out_emb = model.get_output_embeddings()
-        except (AttributeError, NotImplementedError):
-            in_emb = out_emb = None
-        in_weight = getattr(in_emb, "weight", None)
-        # Confirm the tie is actually applied: input and output share the same weight object.
-        if in_weight is not None and in_weight is getattr(out_emb, "weight", None):
-            in_name = {m: n for n, m in model.named_modules()}.get(in_emb)
-            if in_name is not None:
-                embedding_canonical[id(in_weight)] = f"{in_name}.weight" if in_name else "weight"
-
-    # Emit {alias -> canonical} for shared groups that have a clear, declared canonical.
-    alias_to_canonical: dict[str, str] = {}
-    for parameter_id, names in groups.items():
-        if len(names) < 2:
-            continue
-        canonical = embedding_canonical.get(parameter_id)
-        if canonical is None or canonical not in names:
-            non_aliases = [name for name in names if name not in declared_aliases]
-            # No canonical to keep: undeclared share (all non-alias) or all-alias group.
-            if len(non_aliases) == len(names) or not non_aliases:
-                continue
-            canonical = non_aliases[0]
-        for name in names:
-            if name != canonical:
-                alias_to_canonical[name] = canonical
-
-    # A declared alias that never joined an id-group is fine when untied, but under FSDP2/offload
-    # it usually means the wrapper split the shared Parameter and we'd miss the tie -- so warn.
-    unrealized = declared_aliases - set(alias_to_canonical)
-    if unrealized:
-        if is_fsdp2_model(model) or has_accelerate_offload(model):
-            warnings.warn(
-                f"{len(unrealized)} declared tied-weight alias(es) did not form a shared-parameter "
-                f"group under FSDP2/offload (e.g. {sorted(unrealized)[0]!r}); their duplicates may "
-                f"not be deduplicated. If these are genuinely tied, gather/unshard before export."
-            )
-    return alias_to_canonical
 
 
 class TiedWeightMap:

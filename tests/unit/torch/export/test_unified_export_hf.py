@@ -23,71 +23,13 @@ from _test_utils.torch.quantization.tied_modules import (
 )
 
 import modelopt.torch.quantization as mtq
-from modelopt.torch.export.model_utils import TiedWeightMap, _build_tied_alias_map
+from modelopt.torch.export.model_utils import TiedWeightMap
 from modelopt.torch.export.quant_utils import (
     fuse_prequant_layernorm,
     postprocess_state_dict,
     sync_tied_input_amax,
 )
 from modelopt.torch.quantization.nn import TensorQuantizer
-
-
-def test_build_tied_alias_map_dict_style_maps_alias_to_canonical():
-    """Dict-style _tied_weights_keys yields {alias_full_name: canonical_full_name}."""
-    enc, dec = make_tied_linear_pair()
-    parent = wrap_in_parent_with_tied_keys(enc, dec, decoder_canonical=True)
-
-    amap = _build_tied_alias_map(parent)
-
-    assert amap == {"encoder.weight": "decoder.weight"}
-
-
-def test_build_tied_alias_map_empty_for_non_applied_ties():
-    """No alias map for list-style ties (no canonical) or dict-style ties whose params are distinct objects."""
-    enc, dec = make_tied_linear_pair()
-    list_style = wrap_in_parent_with_tied_keys(enc, dec, decoder_canonical=False)
-    assert _build_tied_alias_map(list_style) == {}
-
-    class _Untied(torch.nn.Module):
-        _tied_weights_keys = {r"^lm_head\.weight$": "embed.weight"}
-
-        def __init__(self):
-            super().__init__()
-            self.embed = torch.nn.Linear(4, 4, bias=False)
-            self.lm_head = torch.nn.Linear(4, 4, bias=False)  # separate weight object
-
-    untied = _Untied()
-    assert untied.lm_head.weight is not untied.embed.weight  # declared, but not applied
-    assert _build_tied_alias_map(untied) == {}
-
-
-def test_build_tied_alias_map_warns_when_declared_tie_unformed_under_fsdp(monkeypatch):
-    """A declared tie whose id-group did not form warns under FSDP2 (loud) but is silent off FSDP."""
-    import warnings as _warnings
-
-    import modelopt.torch.export.model_utils as mu
-    from modelopt.torch.export.model_utils import _build_tied_alias_map as build
-
-    class _Untied(torch.nn.Module):
-        _tied_weights_keys = {r"^lm_head\.weight$": "embed.weight"}
-
-        def __init__(self):
-            super().__init__()
-            self.embed = torch.nn.Linear(4, 4, bias=False)
-            self.lm_head = torch.nn.Linear(4, 4, bias=False)  # distinct object
-
-    # Off FSDP: no warning.
-    with _warnings.catch_warnings(record=True) as rec:
-        _warnings.simplefilter("always")
-        assert build(_Untied()) == {}
-    assert not any("shared-parameter group" in str(w.message) for w in rec)
-
-    # Under FSDP2: warn. (is_fsdp2_model is imported into model_utils, so patch it there.)
-    monkeypatch.setattr(mu, "is_fsdp2_model", lambda m: True)
-    with _warnings.catch_warnings(record=True) as rec:
-        _warnings.simplefilter("always")
-        assert build(_Untied()) == {}
-    assert any("shared-parameter group" in str(w.message) for w in rec)
 
 
 def test_tied_group_resolver_group_key_is_shared_and_order_independent():

@@ -94,9 +94,8 @@ def wrap_in_parent_with_tied_keys(
       when ``decoder_canonical=True``, list-style (legacy, no canonical/alias
       distinction) when ``decoder_canonical=False``.
 
-    Used by tests for :class:`TiedWeightMap` / :func:`_build_tied_alias_map`.
-    The legacy list-style branch exercises the "no canonical/alias info" negative
-    case (an empty alias map).
+    Used by tests for :class:`TiedWeightMap`. The list-style branch exercises the
+    "no canonical/alias info" negative case (an empty tie map).
     """
     parent_cls = type("DiffusionGemmaTestParent", (nn.Module,), {})
     parent = parent_cls()
